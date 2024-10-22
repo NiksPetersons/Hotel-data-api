@@ -1,53 +1,27 @@
-require 'uri'
-require 'net/http'
-
 class SearchController < ApplicationController
 
   def index
-    warmup
+    get_data unless Hotel.any?
 
-    q = params[:q] || ''
+    hotels = Hotel.includes(:city).all
+    filtered_hotels = apply_filters(hotels)
 
-    search_result = Hotel.all.select{ |i| i.display_name.include? q }
-
-    with_city = search_result.map do |hotel|
-      {
-        **hotel.attributes,
-        city: { name: hotel['city'] },
-      }
-    end
-
-    render json: with_city
+    render json: filtered_hotels.as_json(
+      only: :display_name,
+      include: { city: { only: [:name, :coat_of_arms] } }
+    )
   end
 
-  def warmup
-    # Fetch hotels and search inside name
+  private
 
-    cities_and_towns = [
-      "Daugavpils",
-      "Jelgava",
-      "Jurmala",
-      "Liepaja",
-      "Rezekne",
-      "Riga",
-      "Ventspils",
-      "Sigulda",
-      "Cesis",
-      "Kuldiga",
-    ]
-
-    Hotel.destroy_all
-
-    cities_and_towns.each do |city|
-      uri = URI("https://nominatim.openstreetmap.org/search?q=Hotels%20in%20#{city}&format=json")
-      res = Net::HTTP.get_response(uri)
-
-      @results = res.is_a?(Net::HTTPSuccess) ? JSON.parse(res.body) : []
-
-      @results.each do |result|
-        Hotel.create( city: city, display_name: result["display_name"])
-      end
-    end
+  def get_data
+    HotelDataFetcher.new.fetch_and_save
   end
 
+  def apply_filters(hotels)
+    hotels = hotels.where('hotels.display_name ILIKE ?', "%#{params[:q]}%") if params[:q].present?
+    hotels = hotels.joins(:city).where('cities.name ILIKE ?', "%#{params[:city]}%") if params[:city].present?
+
+    hotels
+  end
 end
